@@ -1,3 +1,4 @@
+
 name: Refresh repository index
 
 on:
@@ -12,10 +13,20 @@ on:
 
 permissions:
   contents: write
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
 
 jobs:
   refresh:
     runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
     steps:
       - name: Check out index repository
         uses: actions/checkout@v4
@@ -43,3 +54,20 @@ jobs:
             git commit -m 'Refresh repository index'
             git push
           fi
+
+      - name: Configure GitHub Pages
+        uses: actions/configure-pages@v5
+
+      - name: Prepare website
+        run: |
+          mkdir -p _site
+          cp index.html _site/index.html
+
+      - name: Upload website
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+      - name: Publish website
+        id: deployment
+        uses: actions/deploy-pages@v4
