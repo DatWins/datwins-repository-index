@@ -113,7 +113,7 @@ def make_entries(repos, sites):
             elif r['name'].lower() == f'{OWNER}.github.io'.lower():
                 pages_url = f'https://{OWNER.lower()}.github.io/'
             else:
-                pages_url = f'https://{OWNER.lower()}.github.io/{r[\"name\"]}/'
+                pages_url = f'https://{OWNER.lower()}.github.io/{r['name']}/'
         if homepage and homepage.startswith('http'):
             site_url, site_type = homepage, 'Homepage URL'
         elif pages:
