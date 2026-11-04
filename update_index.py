@@ -42,8 +42,7 @@ def clean_repo_url(value):
 
 def netlify_sites():
     if not NETLIFY_TOKEN:
-        print('NETLIFY_AUTH_TOKEN not set; building GitHub-only index.')
-        return []
+        raise RuntimeError('NETLIFY_AUTH_TOKEN is missing. Refusing to publish a GitHub-only index.')
     sites, page = [], 1
     while True:
         url = f'https://api.netlify.com/api/v1/sites?per_page=100&page={page}'
@@ -56,6 +55,7 @@ def netlify_sites():
         if len(batch) < 100:
             break
         page += 1
+    print(f'Netlify API returned {len(sites)} sites.')
     return sites
 
 
@@ -113,7 +113,7 @@ def make_entries(repos, sites):
             elif r['name'].lower() == f'{OWNER}.github.io'.lower():
                 pages_url = f'https://{OWNER.lower()}.github.io/'
             else:
-                pages_url = f'https://{OWNER.lower()}.github.io/{r['name']}/'
+                pages_url = f"https://{OWNER.lower()}.github.io/{r['name']}/"
         if homepage and homepage.startswith('http'):
             site_url, site_type = homepage, 'Homepage URL'
         elif pages:
@@ -152,6 +152,12 @@ def build_html(entries):
   <div class="pages-table-wrap"><table class="pages-table"><thead><tr><th>Repository</th><th>Website</th><th>Created</th><th>Last updated</th></tr></thead><tbody id="pagesRows"></tbody></table></div>
   <p class="count" id="pagesCount"></p>
 </section>
+<section class="pages-section">
+  <div class="pages-heading"><div><h2>Repositories without a website</h2><p class="notice">Repositories with neither GitHub Pages enabled nor a linked Netlify site.</p></div>
+  <div class="pages-tools"><input id="noSiteSearch" type="search" placeholder="Search repositories without websites…" aria-label="Search repositories without websites"><select id="noSiteSort" aria-label="Sort repositories without websites"><option value="created-desc">Newest created first</option><option value="created-asc">Oldest created first</option><option value="updated-desc">Recently updated</option><option value="name">Name A–Z</option></select></div></div>
+  <div class="pages-table-wrap"><table class="pages-table"><thead><tr><th>Repository</th><th>GitHub link</th><th>Created</th><th>Last updated</th><th>Status</th></tr></thead><tbody id="noSiteRows"></tbody></table></div>
+  <p class="count" id="noSiteCount"></p>
+</section>
 <section class="controls" aria-label="Search and filters"><input id="search" type="search" placeholder="Search repository, project, or URL…" aria-label="Search repositories"><select id="category" aria-label="Filter by hosting"><option value="all">All entries</option><option value="Netlify">Netlify-connected (including both)</option><option value="GitHub Pages">GitHub Pages enabled (including both)</option><option value="Both">Only both Netlify & Pages</option><option value="Neither identified">Neither hosting method identified</option><option value="Netlify repository not identified">Netlify repository not identified</option><option value="Netlify repository outside owner">Netlify repository outside owner</option></select><select id="sort" aria-label="Sort entries"><option value="name">Sort: Name A–Z</option><option value="category">Sort: Hosting category</option></select></section><p class="count" id="count"></p><section class="grid" id="grid" aria-live="polite"></section></main><footer>Updated: __UPDATED__. Public GitHub repositories are fetched from the GitHub API. Netlify connections are included when NETLIFY_AUTH_TOKEN is configured in repository secrets. “Likely GitHub Pages URL” follows the standard URL pattern and should be verified before relying on it. “Neither hosting method identified” does not prove that no website exists.</footer>
 <script>
 const entries=__DATA__;
@@ -161,8 +167,9 @@ $('stats').innerHTML=[['Index entries',entries.length],['Netlify-linked entries'
 function card(e){let site=e.site_url?`<a class="link primary" href="${esc(e.site_url)}" target="_blank" rel="noopener noreferrer">${e.site_type==='Likely GitHub Pages URL'?'Open likely site':'Open website'} ↗</a>`:'';let repo=e.repo_url?`<a class="link" href="${esc(e.repo_url)}" target="_blank" rel="noopener noreferrer">GitHub repository ↗</a>`:'';let projects=(e.netlify||[]).map(n=>`<div class="sub">Netlify project: <strong>${esc(n.project)}</strong>${n.url?` · <a href="${esc(n.url)}" target="_blank" rel="noopener noreferrer">Open Netlify site ↗</a>`:''}</div>`).join('');let note=e.site_type==='Likely GitHub Pages URL'?'<p class="notice">Likely Pages URL — generated from the standard URL pattern, not independently verified.</p>':'';return `<article class="card"><div class="titleline"><h2>${esc(e.name)}</h2><span class="badge">${esc(e.classification)}</span></div><div class="sub">${esc(e.full_name)}</div>${projects}${e.pages_enabled?'<div class="sub">GitHub Pages: enabled</div>':''}${e.archived?'<div class="sub">Archived repository</div>':''}${note}<div class="links">${site}${repo}</div></article>`}
 function displayDate(value){if(!value)return '—';const d=new Date(value);return Number.isNaN(d.getTime())?'—':d.toLocaleDateString(undefined,{year:'numeric',month:'short',day:'numeric'});}
 function renderPages(){const q=$('pagesSearch').value.trim().toLowerCase(),sort=$('pagesSort').value;let list=entries.filter(e=>e.pages_enabled);list=list.filter(e=>[e.name,e.full_name,e.pages_url,e.repo_url].join(' ').toLowerCase().includes(q));list.sort((a,b)=>{if(sort==='created-asc')return (a.created_at||'').localeCompare(b.created_at||'');if(sort==='updated-desc')return (b.updated_at||'').localeCompare(a.updated_at||'');if(sort==='name')return a.name.localeCompare(b.name);return (b.created_at||'').localeCompare(a.created_at||'')});$('pagesCount').textContent='Showing '+list.length+' GitHub Pages repositories';$('pagesRows').innerHTML=list.length?list.map(e=>'<tr><td><span class="repo-name">'+esc(e.name)+'</span><br><span class="sub">'+esc(e.full_name)+'</span></td><td>'+(e.pages_url?'<a href="'+esc(e.pages_url)+'" target="_blank" rel="noopener noreferrer">Open website ↗</a>':'—')+'</td><td class="date">'+esc(displayDate(e.created_at))+'</td><td class="date">'+esc(displayDate(e.updated_at))+'</td></tr>').join(''):'<tr><td colspan="4" class="empty">No matching GitHub Pages repositories.</td></tr>'}
+function renderNoSite(){const q=$('noSiteSearch').value.trim().toLowerCase(),sort=$('noSiteSort').value;let list=entries.filter(e=>e.repo_url&&!e.pages_enabled&&!(e.netlify||[]).length&&e.classification==='Neither identified');list=list.filter(e=>[e.name,e.full_name,e.repo_url].join(' ').toLowerCase().includes(q));list.sort((a,b)=>{if(sort==='created-asc')return (a.created_at||'').localeCompare(b.created_at||'');if(sort==='updated-desc')return (b.updated_at||'').localeCompare(a.updated_at||'');if(sort==='name')return a.name.localeCompare(b.name);return (b.created_at||'').localeCompare(a.created_at||'')});$('noSiteCount').textContent='Showing '+list.length+' repositories without an identified website';$('noSiteRows').innerHTML=list.length?list.map(e=>'<tr><td><span class="repo-name">'+esc(e.name)+'</span><br><span class="sub">'+esc(e.full_name)+'</span></td><td><a href="'+esc(e.repo_url)+'" target="_blank" rel="noopener noreferrer">Open repository ↗</a></td><td class="date">'+esc(displayDate(e.created_at))+'</td><td class="date">'+esc(displayDate(e.updated_at))+'</td><td>'+(e.archived?'Archived':'Active')+'</td></tr>').join(''):'<tr><td colspan="5" class="empty">No matching repositories.</td></tr>'}
 function render(){let q=$('search').value.trim().toLowerCase(),cat=$('category').value,sort=$('sort').value;let list=entries.filter(e=>{let text=[e.name,e.full_name,e.repo_url,e.site_url,e.classification,...(e.netlify||[]).map(n=>n.project)].join(' ').toLowerCase();const categoryMatch=cat==='all'||(cat==='GitHub Pages'?e.pages_enabled:(cat==='Netlify'?(e.classification==='Netlify'||e.classification==='Both'):e.classification===cat);return categoryMatch&&text.includes(q)});list.sort((a,b)=>sort==='category'?(a.classification.localeCompare(b.classification)||a.name.localeCompare(b.name)):a.name.localeCompare(b.name));$('count').textContent=`Showing ${list.length} of ${entries.length} entries`;$('grid').innerHTML=list.length?list.map(card).join(''):'<div class="empty">No matching entries. Try another search or filter.</div>'}
-['search','category','sort'].forEach(id=>$(id).addEventListener(id==='search'?'input':'change',render));$('pagesSearch').addEventListener('input',renderPages);$('pagesSort').addEventListener('change',renderPages);render();renderPages();
+['search','category','sort'].forEach(id=>$(id).addEventListener(id==='search'?'input':'change',render));$('pagesSearch').addEventListener('input',renderPages);$('pagesSort').addEventListener('change',renderPages);$('noSiteSearch').addEventListener('input',renderNoSite);$('noSiteSort').addEventListener('change',renderNoSite);render();renderPages();renderNoSite();
 </script></body></html>'''.replace('__DATA__', data).replace('__UPDATED__', updated)
 
 
