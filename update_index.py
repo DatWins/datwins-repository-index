@@ -139,6 +139,67 @@ def make_entries(repos, sites):
 def build_html(entries):
     data = json.dumps(entries, ensure_ascii=False).replace('</', '<\\/')
     updated = datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')
+
+    def esc(value):
+        return html.escape(str(value or ''), quote=True)
+
+    # Render all links directly into the HTML as a no-JavaScript fallback.
+    netlify_by_url = {}
+    for entry in entries:
+        for site in entry.get('netlify', []):
+            url = site.get('url', '')
+            if url:
+                netlify_by_url.setdefault(url.rstrip('/'), {
+                    'project': site.get('project') or entry.get('name', 'Netlify site'),
+                    'url': url,
+                    'repo': site.get('repo_url') or entry.get('repo_url', '')
+                })
+    netlify_rows = ''.join(
+        '<tr><td><strong>' + esc(site['project']) + '</strong></td>'
+        '<td><a class="link primary" href="' + esc(site['url']) + '" target="_blank" rel="noopener noreferrer">Open published website ↗</a><br><span class="sub">' + esc(site['url']) + '</span></td>'
+        '<td>' + (('<a href="' + esc(site['repo']) + '" target="_blank" rel="noopener noreferrer">' + esc(site['repo'].replace('https://github.com/', '')) + ' ↗</a>') if site['repo'] else '—') + '</td></tr>'
+        for site in sorted(netlify_by_url.values(), key=lambda x: x['project'].lower())
+    )
+
+    pages_entries = sorted([e for e in entries if e.get('pages_enabled')], key=lambda x: x.get('created_at', ''), reverse=True)
+    pages_rows = ''.join(
+        '<tr><td><strong>' + esc(e.get('name')) + '</strong><br><span class="sub">' + esc(e.get('full_name')) + '</span></td>'
+        '<td>' + (('<a href="' + esc(e.get('pages_url')) + '" target="_blank" rel="noopener noreferrer">Open website ↗</a>') if e.get('pages_url') else '—') + '</td>'
+        '<td class="date">' + esc((e.get('created_at', '') or '')[:10] or '—') + '</td>'
+        '<td class="date">' + esc((e.get('updated_at', '') or '')[:10] or '—') + '</td></tr>'
+        for e in pages_entries
+    )
+
+    no_site_entries = sorted([
+        e for e in entries
+        if e.get('repo_url') and not e.get('pages_enabled')
+        and not e.get('netlify') and e.get('classification') == 'Neither identified'
+    ], key=lambda x: x.get('name', '').lower())
+    no_site_rows = ''.join(
+        '<tr><td><strong>' + esc(e.get('name')) + '</strong><br><span class="sub">' + esc(e.get('full_name')) + '</span></td>'
+        '<td><a href="' + esc(e.get('repo_url')) + '" target="_blank" rel="noopener noreferrer">Open repository ↗</a></td>'
+        '<td class="date">' + esc((e.get('created_at', '') or '')[:10] or '—') + '</td>'
+        '<td class="date">' + esc((e.get('updated_at', '') or '')[:10] or '—') + '</td>'
+        '<td>' + ('Archived' if e.get('archived') else 'Active') + '</td></tr>'
+        for e in no_site_entries
+    )
+
+    cards = []
+    for e in entries:
+        site_link = ('<a class="link primary" href="' + esc(e.get('site_url')) + '" target="_blank" rel="noopener noreferrer">Open website ↗</a>') if e.get('site_url') else ''
+        repo_link = ('<a class="link" href="' + esc(e.get('repo_url')) + '" target="_blank" rel="noopener noreferrer">GitHub repository ↗</a>') if e.get('repo_url') else ''
+        project_links = ''.join(
+            '<div class="sub">Netlify project: <strong>' + esc(n.get('project')) + '</strong> · <a href="' + esc(n.get('url')) + '" target="_blank" rel="noopener noreferrer">Open Netlify site ↗</a></div>'
+            for n in e.get('netlify', []) if n.get('url')
+        )
+        pages_note = '<p class="notice">GitHub Pages enabled.</p>' if e.get('pages_enabled') else ''
+        cards.append(
+            '<article class="card"><div class="titleline"><h2>' + esc(e.get('name')) + '</h2><span class="badge">' + esc(e.get('classification')) + '</span></div>'
+            '<div class="sub">' + esc(e.get('full_name')) + '</div>' + project_links + pages_note
+            + '<div class="links">' + site_link + repo_link + '</div></article>'
+        )
+    cards_html = ''.join(cards)
+
     return r'''<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>DatWins — Repository & Website Index</title>
 <style>
@@ -149,22 +210,22 @@ def build_html(entries):
 <section class="pages-section">
   <div class="pages-heading"><div><h2>Netlify websites</h2><p class="notice">Direct links to your Netlify-published websites, with their connected GitHub repositories.</p></div>
   <div class="pages-tools"><input id="netlifySearch" type="search" placeholder="Search Netlify projects…" aria-label="Search Netlify projects"><select id="netlifySort" aria-label="Sort Netlify websites"><option value="name">Name A–Z</option><option value="repo">Repository A–Z</option><option value="url">Website URL</option></select></div></div>
-  <div class="pages-table-wrap"><table class="pages-table"><thead><tr><th>Netlify project</th><th>Published website</th><th>Connected GitHub repository</th></tr></thead><tbody id="netlifyRows"></tbody></table></div>
+  <div class="pages-table-wrap"><table class="pages-table"><thead><tr><th>Netlify project</th><th>Published website</th><th>Connected GitHub repository</th></tr></thead><tbody id="netlifyRows">__NETLIFY_ROWS__</tbody></table></div>
   <p class="count" id="netlifyCount"></p>
 </section>
 <section class="pages-section">
   <div class="pages-heading"><div><h2>GitHub Pages websites</h2><p class="notice">Repositories where GitHub Pages is enabled, with repository creation and update dates.</p></div>
   <div class="pages-tools"><input id="pagesSearch" type="search" placeholder="Search GitHub Pages…" aria-label="Search GitHub Pages"><select id="pagesSort" aria-label="Sort GitHub Pages"><option value="created-desc">Newest created first</option><option value="created-asc">Oldest created first</option><option value="updated-desc">Recently updated</option><option value="name">Name A–Z</option></select></div></div>
-  <div class="pages-table-wrap"><table class="pages-table"><thead><tr><th>Repository</th><th>Website</th><th>Created</th><th>Last updated</th></tr></thead><tbody id="pagesRows"></tbody></table></div>
+  <div class="pages-table-wrap"><table class="pages-table"><thead><tr><th>Repository</th><th>Website</th><th>Created</th><th>Last updated</th></tr></thead><tbody id="pagesRows">__PAGES_ROWS__</tbody></table></div>
   <p class="count" id="pagesCount"></p>
 </section>
 <section class="pages-section">
   <div class="pages-heading"><div><h2>Repositories without a website</h2><p class="notice">Repositories with neither GitHub Pages enabled nor a linked Netlify site.</p></div>
   <div class="pages-tools"><input id="noSiteSearch" type="search" placeholder="Search repositories without websites…" aria-label="Search repositories without websites"><select id="noSiteSort" aria-label="Sort repositories without websites"><option value="created-desc">Newest created first</option><option value="created-asc">Oldest created first</option><option value="updated-desc">Recently updated</option><option value="name">Name A–Z</option></select></div></div>
-  <div class="pages-table-wrap"><table class="pages-table"><thead><tr><th>Repository</th><th>GitHub link</th><th>Created</th><th>Last updated</th><th>Status</th></tr></thead><tbody id="noSiteRows"></tbody></table></div>
+  <div class="pages-table-wrap"><table class="pages-table"><thead><tr><th>Repository</th><th>GitHub link</th><th>Created</th><th>Last updated</th><th>Status</th></tr></thead><tbody id="noSiteRows">__NO_SITE_ROWS__</tbody></table></div>
   <p class="count" id="noSiteCount"></p>
 </section>
-<section class="controls" aria-label="Search and filters"><input id="search" type="search" placeholder="Search repository, project, or URL…" aria-label="Search repositories"><select id="category" aria-label="Filter by hosting"><option value="all">All entries</option><option value="Netlify">Netlify-connected (including both)</option><option value="GitHub Pages">GitHub Pages enabled (including both)</option><option value="Both">Only both Netlify & Pages</option><option value="Neither identified">Neither hosting method identified</option><option value="Netlify repository not identified">Netlify repository not identified</option><option value="Netlify repository outside owner">Netlify repository outside owner</option></select><select id="sort" aria-label="Sort entries"><option value="name">Sort: Name A–Z</option><option value="category">Sort: Hosting category</option></select></section><p class="count" id="count"></p><section class="grid" id="grid" aria-live="polite"></section></main><footer>Updated: __UPDATED__. Public GitHub repositories are fetched from the GitHub API. Netlify connections are included when NETLIFY_AUTH_TOKEN is configured in repository secrets. “Likely GitHub Pages URL” follows the standard URL pattern and should be verified before relying on it. “Neither hosting method identified” does not prove that no website exists.</footer>
+<section class="controls" aria-label="Search and filters"><input id="search" type="search" placeholder="Search repository, project, or URL…" aria-label="Search repositories"><select id="category" aria-label="Filter by hosting"><option value="all">All entries</option><option value="Netlify">Netlify-connected (including both)</option><option value="GitHub Pages">GitHub Pages enabled (including both)</option><option value="Both">Only both Netlify & Pages</option><option value="Neither identified">Neither hosting method identified</option><option value="Netlify repository not identified">Netlify repository not identified</option><option value="Netlify repository outside owner">Netlify repository outside owner</option></select><select id="sort" aria-label="Sort entries"><option value="name">Sort: Name A–Z</option><option value="category">Sort: Hosting category</option></select></section><p class="count" id="count"></p><section class="grid" id="grid" aria-live="polite">__CARDS_HTML__</section></main><footer>Updated: __UPDATED__. Public GitHub repositories are fetched from the GitHub API. Netlify connections are included when NETLIFY_AUTH_TOKEN is configured in repository secrets. “Likely GitHub Pages URL” follows the standard URL pattern and should be verified before relying on it. “Neither hosting method identified” does not prove that no website exists.</footer>
 <script>
 const entries=__DATA__;
 const $=id=>document.getElementById(id);const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -177,7 +238,7 @@ function renderPages(){const q=$('pagesSearch').value.trim().toLowerCase(),sort=
 function renderNoSite(){const q=$('noSiteSearch').value.trim().toLowerCase(),sort=$('noSiteSort').value;let list=entries.filter(e=>e.repo_url&&!e.pages_enabled&&!(e.netlify||[]).length&&e.classification==='Neither identified');list=list.filter(e=>[e.name,e.full_name,e.repo_url].join(' ').toLowerCase().includes(q));list.sort((a,b)=>{if(sort==='created-asc')return (a.created_at||'').localeCompare(b.created_at||'');if(sort==='updated-desc')return (b.updated_at||'').localeCompare(a.updated_at||'');if(sort==='name')return a.name.localeCompare(b.name);return (b.created_at||'').localeCompare(a.created_at||'')});$('noSiteCount').textContent='Showing '+list.length+' repositories without an identified website';$('noSiteRows').innerHTML=list.length?list.map(e=>'<tr><td><span class="repo-name">'+esc(e.name)+'</span><br><span class="sub">'+esc(e.full_name)+'</span></td><td><a href="'+esc(e.repo_url)+'" target="_blank" rel="noopener noreferrer">Open repository ↗</a></td><td class="date">'+esc(displayDate(e.created_at))+'</td><td class="date">'+esc(displayDate(e.updated_at))+'</td><td>'+(e.archived?'Archived':'Active')+'</td></tr>').join(''):'<tr><td colspan="5" class="empty">No matching repositories.</td></tr>'}
 function render(){let q=$('search').value.trim().toLowerCase(),cat=$('category').value,sort=$('sort').value;let list=entries.filter(e=>{let text=[e.name,e.full_name,e.repo_url,e.site_url,e.classification,...(e.netlify||[]).map(n=>n.project)].join(' ').toLowerCase();const categoryMatch=cat==='all'||(cat==='GitHub Pages'?e.pages_enabled:(cat==='Netlify'?(e.classification==='Netlify'||e.classification==='Both'):e.classification===cat));return categoryMatch&&text.includes(q)});list.sort((a,b)=>sort==='category'?(a.classification.localeCompare(b.classification)||a.name.localeCompare(b.name)):a.name.localeCompare(b.name));$('count').textContent=`Showing ${list.length} of ${entries.length} entries`;$('grid').innerHTML=list.length?list.map(card).join(''):'<div class="empty">No matching entries. Try another search or filter.</div>'}
 ['search','category','sort'].forEach(id=>$(id).addEventListener(id==='search'?'input':'change',render));$('netlifySearch').addEventListener('input',renderNetlify);$('netlifySort').addEventListener('change',renderNetlify);$('pagesSearch').addEventListener('input',renderPages);$('pagesSort').addEventListener('change',renderPages);$('noSiteSearch').addEventListener('input',renderNoSite);$('noSiteSort').addEventListener('change',renderNoSite);render();renderNetlify();renderPages();renderNoSite();
-</script></body></html>'''.replace('__DATA__', data).replace('__UPDATED__', updated)
+</script></body></html>'''.replace('__DATA__', data).replace('__UPDATED__', updated).replace('__NETLIFY_ROWS__', netlify_rows).replace('__PAGES_ROWS__', pages_rows).replace('__NO_SITE_ROWS__', no_site_rows).replace('__CARDS_HTML__', cards_html)
 
 
 def main():
